@@ -75,14 +75,14 @@ It is a decision-support system with memory, feedback, and explainability.
 - Designed for legal teams and admins
 
 ### 🏗️ System Architecture
-#### Frontend (React + R3F)
 ```
+Frontend (React + R3F)
 │
 ├─ ChatPanel (user input)
 ├─ ResponsePanel (steps, timeline, glossary)
 ├─ VisualPanel (court process animation)
 │
-#### Backend (FastAPI)
+Backend (FastAPI)
 │
 ├─ Domain classification
 ├─ Decision engine (state → action)
@@ -90,8 +90,9 @@ It is a decision-support system with memory, feedback, and explainability.
 ├─ Feedback ingestion
 ├─ Document parsing
 │
-#### Database (SQLite)
+Database (SQLite)
 └─ Stores agent memory & rewards
+```
 ```
 
 ### 🧪 Reinforcement Learning Design
