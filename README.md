@@ -93,8 +93,6 @@ Backend (FastAPI)
 Database (SQLite)
 └─ Stores agent memory & rewards
 ```
-```
-
 ### 🧪 Reinforcement Learning Design
 
 This system intentionally uses lightweight RL, not deep learning:
