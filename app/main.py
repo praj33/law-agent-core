@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, UploadFile, File
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, String, Float, Integer
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
@@ -7,20 +7,24 @@ from typing import List, Optional
 import fitz  # PyMuPDF
 import re
 
-# -----------------------------
-# DATABASE SETUP
-# -----------------------------
+# =====================================================
+# CONFIG
+# =====================================================
 DATABASE_URL = "sqlite:///./law_agent.db"
 
+# =====================================================
+# DATABASE SETUP
+# =====================================================
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(bind=engine, autoflush=False)
 Base = declarative_base()
 
-# -----------------------------
-# AGENT MEMORY MODEL
-# -----------------------------
+# =====================================================
+# AGENT MEMORY (RL TABLE)
+# =====================================================
 class AgentMemory(Base):
     __tablename__ = "agent_memory"
 
@@ -32,22 +36,22 @@ class AgentMemory(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# -----------------------------
+# =====================================================
 # FASTAPI APP
-# -----------------------------
-app = FastAPI(title="Law Agent Core Engine")
+# =====================================================
+app = FastAPI(title="Nyaya RL Decision Engine")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
     allow_headers=["*"],
+    allow_methods=["*"],
+    allow_credentials=True
 )
 
-# -----------------------------
+# =====================================================
 # DB DEPENDENCY
-# -----------------------------
+# =====================================================
 def get_db():
     db = SessionLocal()
     try:
@@ -55,14 +59,15 @@ def get_db():
     finally:
         db.close()
 
-# -----------------------------
-# INPUT SCHEMAS
-# -----------------------------
-class DecideRequest(BaseModel):
+# =====================================================
+# REQUEST SCHEMAS
+# =====================================================
+class DecisionRequest(BaseModel):
     user_type: str
-    region: str
-    user_input: str
-    candidate_actions: List[str]
+    jurisdiction: str
+    domain_id: str
+    case_summary: str
+
 
 class FeedbackRequest(BaseModel):
     state_key: str
@@ -71,31 +76,100 @@ class FeedbackRequest(BaseModel):
     time_spent: int = 0
     follow_up: bool = False
 
-# -----------------------------
-# DOMAIN CLASSIFIER
-# -----------------------------
-def classify_domain(text: str) -> str:
-    text = text.lower()
+# =====================================================
+# LOCAL NYAYA LKA STUB (STRICT CONTRACT)
+# =====================================================
+LKA_ROUTES = {
+    "IN_RENT_EVICTION": [
+        {
+            "route_id": "IN_EVICTION_NOTICE",
+            "domain_id": "IN_RENT_EVICTION",
+            "route_name": "Legal Eviction via Notice",
+            "procedure_ids": [
+                "IN_EVICT_NOTICE",
+                "IN_EVICT_FILE",
+                "IN_EVICT_HEARING"
+            ]
+        }
+    ]
+}
 
-    if "rent" in text or "tenant" in text or "landlord" in text:
-        return "rent_dispute"
-    if "divorce" in text or "marriage" in text:
-        return "family_law"
-    if "job" in text or "salary" in text or "termination" in text:
-        return "employment_law"
+LKA_PROCEDURES = {
+    "IN_EVICT_NOTICE": {
+        "procedure_id": "IN_EVICT_NOTICE",
+        "steps": [
+            {
+                "step": 1,
+                "action": "Serve legal notice",
+                "statute": "TPA Section 106",
+                "min_days": 15,
+                "max_days": 30
+            }
+        ],
+        "failure_paths": ["NO_RESPONSE", "INVALID_NOTICE"],
+        "appeal_available": True
+    },
+    "IN_EVICT_FILE": {
+        "procedure_id": "IN_EVICT_FILE",
+        "steps": [
+            {
+                "step": 1,
+                "action": "File eviction suit",
+                "statute": "Rent Control Act",
+                "min_days": 30,
+                "max_days": 90
+            }
+        ],
+        "failure_paths": ["CASE_DISMISSED"],
+        "appeal_available": True
+    },
+    "IN_EVICT_HEARING": {
+        "procedure_id": "IN_EVICT_HEARING",
+        "steps": [
+            {
+                "step": 1,
+                "action": "Court hearing",
+                "statute": "Civil Procedure Code",
+                "min_days": 60,
+                "max_days": 180
+            }
+        ],
+        "failure_paths": ["ADJOURNMENT"],
+        "appeal_available": True
+    }
+}
 
-    return "general_legal"
+LKA_EVIDENCE = {
+    pid: {
+        "procedure_id": pid,
+        "required_documents": [
+            "Rent Agreement",
+            "Ownership Proof",
+            "Previous Notices"
+        ],
+        "optional_documents": ["Witness affidavit"]
+    }
+    for pid in LKA_PROCEDURES
+}
 
-# -----------------------------
-# STATE KEY BUILDER
-# -----------------------------
-def build_state_key(user_type: str, region: str, domain: str) -> str:
-    return f"{domain}|{user_type}|{region}".lower()
+LKA_OUTCOMES = {
+    pid: {
+        "procedure_id": pid,
+        "success_range": [0.55, 0.75],
+        "escalation_risk": 0.2,
+        "wrong_route_penalty": 0.4
+    }
+    for pid in LKA_PROCEDURES
+}
 
-# -----------------------------
-# REWARD CALCULATOR
-# -----------------------------
-def calculate_reward(vote: Optional[str], time_spent: int, follow_up: bool) -> float:
+# =====================================================
+# RL CORE
+# =====================================================
+def build_state_key(jurisdiction: str, domain_id: str, user_type: str) -> str:
+    return f"{jurisdiction}|{domain_id}|{user_type}".lower()
+
+
+def calculate_reward(vote, time_spent, follow_up):
     reward = 0.0
     if vote == "up":
         reward += 1.0
@@ -107,16 +181,14 @@ def calculate_reward(vote: Optional[str], time_spent: int, follow_up: bool) -> f
         reward += 0.3
     return reward
 
-# -----------------------------
-# MEMORY UPDATE
-# -----------------------------
-def update_agent_memory(db: Session, state_key: str, action_key: str, reward: float):
+
+def update_memory(db, state_key, action_key, reward):
     record = db.query(AgentMemory).filter(
         AgentMemory.state_key == state_key,
         AgentMemory.action_key == action_key
     ).first()
 
-    if record is None:
+    if not record:
         record = AgentMemory(
             state_key=state_key,
             action_key=action_key,
@@ -132,31 +204,29 @@ def update_agent_memory(db: Session, state_key: str, action_key: str, reward: fl
 
     db.commit()
 
-# -----------------------------
-# ACTION SELECTION
-# -----------------------------
-def select_best_action(db: Session, state_key: str, candidate_actions: List[str]) -> str:
+
+def select_best_route(db, state_key, routes):
     memories = db.query(AgentMemory).filter(
         AgentMemory.state_key == state_key
     ).all()
 
-    scores = {m.action_key: m.avg_reward for m in memories}
+    score_map = {m.action_key: m.avg_reward for m in memories}
 
-    best_action = candidate_actions[0]
-    best_score = scores.get(best_action, 0.0)
+    best = routes[0]
+    best_score = score_map.get(best["route_id"], 0.0)
 
-    for action in candidate_actions:
-        score = scores.get(action, 0.0)
+    for r in routes:
+        score = score_map.get(r["route_id"], 0.0)
         if score > best_score:
+            best = r
             best_score = score
-            best_action = action
 
-    return best_action
+    return best
 
-# -----------------------------
-# PDF PARSER
-# -----------------------------
-def extract_text_from_pdf(file_bytes: bytes) -> str:
+# =====================================================
+# DOCUMENT PARSER
+# =====================================================
+def extract_text_from_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     text = ""
     for page in doc:
@@ -164,12 +234,9 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     doc.close()
     return text
 
-# -----------------------------
-# LEGAL FACT EXTRACTOR
-# -----------------------------
-def extract_legal_facts(text: str) -> dict:
-    facts = {}
 
+def extract_legal_facts(text):
+    facts = {}
     dates = re.findall(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", text)
     if dates:
         facts["dates"] = dates[:5]
@@ -178,48 +245,61 @@ def extract_legal_facts(text: str) -> dict:
     if amounts:
         facts["amounts"] = amounts[:5]
 
-    if "landlord" in text.lower():
-        facts["party_1"] = "landlord"
-    if "tenant" in text.lower():
-        facts["party_2"] = "tenant"
-
     return facts
 
-# -----------------------------
-# API: DECIDE
-# -----------------------------
-@app.post("/decide")
-def decide_action(payload: DecideRequest, db: Session = Depends(get_db)):
-    domain = classify_domain(payload.user_input)
+# =====================================================
+# API: DECISION
+# =====================================================
+@app.post("/api/v1/decision")
+def make_decision(payload: DecisionRequest, db: Session = Depends(get_db)):
     state_key = build_state_key(
-        payload.user_type,
-        payload.region,
-        domain
+        payload.jurisdiction,
+        payload.domain_id,
+        payload.user_type
     )
 
-    action = select_best_action(
-        db,
-        state_key,
-        payload.candidate_actions
-    )
+    routes = LKA_ROUTES.get(payload.domain_id)
+    if not routes:
+        raise HTTPException(400, "No legal routes available")
+
+    chosen_route = select_best_route(db, state_key, routes)
+
+    procedures = [
+        LKA_PROCEDURES[pid]
+        for pid in chosen_route["procedure_ids"]
+    ]
+
+    evidence = [
+        LKA_EVIDENCE[p["procedure_id"]]
+        for p in procedures
+    ]
+
+    outcomes = [
+        LKA_OUTCOMES[p["procedure_id"]]
+        for p in procedures
+    ]
 
     return {
         "state_key": state_key,
-        "domain": domain,
-        "chosen_action": action
+        "jurisdiction": payload.jurisdiction,
+        "domain_id": payload.domain_id,
+        "chosen_route": chosen_route,
+        "procedures": procedures,
+        "evidence": evidence,
+        "outcomes": outcomes
     }
 
-# -----------------------------
+# =====================================================
 # API: FEEDBACK
-# -----------------------------
-@app.post("/feedback")
-def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
+# =====================================================
+@app.post("/api/v1/feedback")
+def feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
     reward = calculate_reward(
         payload.vote,
         payload.time_spent,
         payload.follow_up
     )
-    update_agent_memory(
+    update_memory(
         db,
         payload.state_key,
         payload.action_key,
@@ -227,92 +307,21 @@ def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
     )
     return {"status": "recorded", "reward": reward}
 
-# -----------------------------
+# =====================================================
 # API: DOCUMENT UPLOAD
-# -----------------------------
-@app.post("/upload-document")
+# =====================================================
+@app.post("/api/v1/upload")
 async def upload_document(file: UploadFile = File(...)):
-    file_bytes = await file.read()
-
-    text = extract_text_from_pdf(file_bytes)
+    text = extract_text_from_pdf(await file.read())
     facts = extract_legal_facts(text)
-    domain = classify_domain(text)
-
     return {
-        "domain": domain,
         "facts": facts,
-        "text_preview": text[:1000]
+        "preview": text[:1000]
     }
 
-# -----------------------------
-# ANALYTICS: TOP ACTIONS
-# -----------------------------
-@app.get("/analytics/top-actions")
-def top_actions(limit: int = 10, db: Session = Depends(get_db)):
-    records = (
-        db.query(AgentMemory)
-        .order_by(AgentMemory.avg_reward.desc())
-        .limit(limit)
-        .all()
-    )
-
-    return [
-        {
-            "state_key": r.state_key,
-            "action_key": r.action_key,
-            "avg_reward": r.avg_reward,
-            "times_used": r.times_used
-        }
-        for r in records
-    ]
-
-
-# -----------------------------
-# ANALYTICS: WORST ACTIONS
-# -----------------------------
-@app.get("/analytics/worst-actions")
-def worst_actions(limit: int = 10, db: Session = Depends(get_db)):
-    records = (
-        db.query(AgentMemory)
-        .order_by(AgentMemory.avg_reward.asc())
-        .limit(limit)
-        .all()
-    )
-
-    return [
-        {
-            "state_key": r.state_key,
-            "action_key": r.action_key,
-            "avg_reward": r.avg_reward,
-            "times_used": r.times_used
-        }
-        for r in records
-    ]
-
-
-# -----------------------------
-# ANALYTICS: STATE SUMMARY
-# -----------------------------
-@app.get("/analytics/state/{state_key}")
-def state_summary(state_key: str, db: Session = Depends(get_db)):
-    records = (
-        db.query(AgentMemory)
-        .filter(AgentMemory.state_key == state_key)
-        .all()
-    )
-
-    return [
-        {
-            "action_key": r.action_key,
-            "avg_reward": r.avg_reward,
-            "times_used": r.times_used
-        }
-        for r in records
-    ]
-
-# -----------------------------
+# =====================================================
 # HEALTH
-# -----------------------------
+# =====================================================
 @app.get("/")
-def root():
-    return {"status": "law-agent core running"}
+def health():
+    return {"status": "Nyaya RL Decision Engine running"}
