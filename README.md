@@ -85,7 +85,6 @@ This behavior is **intentional and required**.
 
 POST /api/v1/decision
 
-
 Request:
 ```json
 {
@@ -105,14 +104,14 @@ Evidence requirements
 
 Outcome probabilities
 
-Feedback API
+### Feedback API
 ```json
 POST /api/v1/feedback
 ```
 
 Used to reinforce future decisions.
 
-Document Upload
+### Document Upload API
 ```json
 POST /api/v1/upload
 ```
