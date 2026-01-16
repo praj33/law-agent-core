@@ -1,0 +1,41 @@
+{
+  "country": "IN",
+  "domain": "IN_RENT_EVICTION",
+  "route": "IN_EVICTION_NOTICE",
+  "procedure": [
+    {
+      "procedure_id": "IN_EVICT_NOTICE",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Serve legal notice to tenant",
+          "statute": "Transfer of Property Act, Section 106",
+          "min_days": 15,
+          "max_days": 30
+        }
+      ]
+    }
+  ],
+  "timeline": [
+    {
+      "phase": "Notice Period",
+      "min_days": 15,
+      "max_days": 30
+    }
+  ],
+  "evidence": [
+    {
+      "required_documents": [
+        "Rent Agreement",
+        "Proof of Ownership",
+        "Previous Rent Receipts"
+      ],
+      "optional_documents": [
+        "Witness Affidavit"
+      ]
+    }
+  ],
+  "statutes": [
+    "Transfer of Property Act, Section 106"
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Nyaya Legal Context",
+  "description": "Canonical legal context returned to frontend and response layers",
+  "type": "object",
+  "required": [
+    "country",
+    "domain",
+    "route",
+    "procedure",
+    "timeline",
+    "evidence",
+    "statutes"
+  ],
+  "properties": {
+    "country": {
+      "type": "string",
+      "description": "Jurisdiction country code (IN, UK, UAE)"
+    },
+    "domain": {
+      "type": "string",
+      "description": "Nyaya domain ID (e.g. IN_RENT_EVICTION)"
+    },
+    "route": {
+      "type": "string",
+      "description": "Chosen legal route ID"
+    },
+    "procedure": {
+      "type": "array",
+      "description": "Ordered legal procedures",
+      "items": {
+        "type": "object",
+        "required": ["procedure_id", "steps"],
+        "properties": {
+          "procedure_id": { "type": "string" },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["step", "action"],
+              "properties": {
+                "step": { "type": "number" },
+                "action": { "type": "string" },
+                "statute": { "type": "string" },
+                "min_days": { "type": "number" },
+                "max_days": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "description": "Expected legal timeline phases",
+      "items": {
+        "type": "object",
+        "required": ["phase", "min_days", "max_days"],
+        "properties": {
+          "phase": { "type": "string" },
+          "min_days": { "type": "number" },
+          "max_days": { "type": "number" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Evidence requirements",
+      "items": {
+        "type": "object",
+        "required": ["required_documents"],
+        "properties": {
+          "required_documents": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "optional_documents": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "statutes": {
+      "type": "array",
+      "description": "Applicable statutes",
+      "items": { "type": "string" }
+    }
+  }
+}
